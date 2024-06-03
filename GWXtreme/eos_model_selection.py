@@ -203,12 +203,17 @@ def get_trials(fd):
         new_margPostData = new_margPostData[chosen]
 
         # generate a new kde
-        new_kde = Bounded_2d_kde(new_margPostData, xlow=0.0,
-                                 xhigh=None, ylow=0.0,
-                                 yhigh=fd['yhigh'],
-                                 bw=fd['bw'])
+        if fd['kdedim'] == 2:
+            new_kde = Bounded_2d_kde(new_margPostData, xlow=0.0,
+                                     xhigh=None, ylow=0.0,
+                                     yhigh=fd['yhigh'],
+                                     bw=fd['bw'])
+        elif fd['kdedim'] == 3:
+            new_kde = Bounded_3d_kde(new_margPostData,
+                                     low=[0.0,0.0,0.0],
+                                     high=[np.inf,fd['yhigh'],np.inf])   
 
-        # integrate to get support
+       # integrate to get support
         [this_lambdat_eos1, this_q_eos1,
          this_support2D1] = integrator(fd['q_min'], fd['q_max'],
                                        fd['mc_mean'], fd['s1'],
@@ -216,7 +221,10 @@ def get_trials(fd):
                                        gridN=fd['gridN'],
                                        var_LambdaT=fd['var_LambdaT'],
                                        var_q=fd['var_q'],
-                                       minMass=fd['minMass'])
+                                       minMass=fd['minMass'],
+                                       kdedim=fd['kdedim'],
+                                       var_Lambda1=fd['var_Lambda1'],
+                                       var_Lambda2=fd['var_Lambda2'])
         [this_lambdat_eos2, this_q_eos2,
          this_support2D2] = integrator(fd['q_min'], fd['q_max'],
                                        fd['mc_mean'], fd['s2'],
@@ -224,7 +232,11 @@ def get_trials(fd):
                                        gridN=fd['gridN'],
                                        var_LambdaT=fd['var_LambdaT'],
                                        var_q=fd['var_q'],
-                                       minMass=fd['minMass'])
+                                       minMass=fd['minMass'],
+                                       kdedim=fd['kdedim'],
+                                       var_Lambda1=fd['var_Lambda1'],
+                                       var_Lambda2=fd['var_Lambda2'])
+
         # store the result
         support2D1_list.append(this_support2D1)
         support2D2_list.append(this_support2D2)
@@ -255,6 +267,8 @@ class Model_selection:
                          
         Ns            :: Number of Samples to be used for KDE. (Using all samples 
                          from PE will make it very slow)
+
+        kdedim        :: dimensionality of the KDE
                          
         '''
         if(posteriorFile[-2:]=='h5'):
@@ -275,8 +289,45 @@ class Model_selection:
                                                 np.array(_data['chirp_mass_source']),
                                                 np.array(_data['lambda_1']),
                                                 np.array(_data['lambda_2']))
-                LambdaT=None
-            
+                LambdaT=None 
+
+        elif(posteriorFile[-3:]=='txt'):
+            _data = np.loadtxt(posteriorFile)
+            if kdedim==2:
+                (m1,m2,q,mc,LambdaT)=(np.array(_data[0]),
+                                        np.array(_data[1]),
+                                        np.array(_data[2]),
+                                        np.array(_data[3]),
+                                        np.array(_data[4]))
+                lambda_1,lambda_2 = None,None
+            else:
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data[0]),
+                                                np.array(_data[1]),
+                                                np.array(_data[2]),
+                                                np.array(_data[3]),
+                                                np.array(_data[4]),
+                                                np.array(_data[5]))
+                LambdaT=None 
+
+        elif(posteriorFile[-4:]=='json'):
+            with open(posteriorFile,"r") as f:
+                _data = json.load(f)['posterior']['content']
+            if kdedim==2:
+                (m1,m2,q,mc,LambdaT)=(np.array(_data['m1_source']),
+                                        np.array(_data['m2_source']),
+                                        np.array(_data['q']),
+                                        np.array(_data['mc_source']),
+                                        np.array(_data['lambdat']))
+                lambda_1,lambda_2 = None,None
+            else:
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['m1_source']),
+                                                np.array(_data['m2_source']),
+                                                np.array(_data['q']),
+                                                np.array(_data['mc_source']),
+                                                np.array(_data['lambda_1']),
+                                                np.array(_data['lambda_2']))
+                LambdaT=None 
+
         else:
             _data = np.recfromtxt(posteriorFile, names=True)
             if kdedim==2:
@@ -287,10 +338,10 @@ class Model_selection:
                                         np.array(_data['lambdat']))
                 lambda_1,lambda_2 = None,None
             else:
-                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['mass_1_source']),
-                                        np.array(_data['mass_2_source']),
-                                        np.array(_data['mass_ratio']),
-                                        np.array(_data['chirp_mass_source']),
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['m1_source']),
+                                        np.array(_data['m2_source']),
+                                        np.array(_data['q']),
+                                        np.array(_data['mc_source']),
                                         np.array(_data['lambda_1']),
                                         np.array(_data['lambda_2']))
                 LambdaT=None
@@ -638,7 +689,10 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                            "s2": s2, "max_mass_eos1": max_mass_eos1,
                            "max_mass_eos2": max_mass_eos2, "gridN": gridN,
                            "var_LambdaT": self.var_LambdaT, "var_q": self.var_q,
-                           "minMass": self.minMass, 'trials': this_trials}
+                           "minMass": self.minMass, 'trials': this_trials,
+                           "kdedim":self.kdedim, "var_Lambda1": self.var_Lambda1,
+                           "var_Lambda2": self.var_Lambda2}
+
             futures.append(get_trials.remote(future_dict))
             if verbose:
                 print("Submitted task in core: {}".format(ii+1))
