@@ -95,7 +95,7 @@ def get_Lambda_for_eos(m,max_mass_eos, eosfunc):
 
 # The integrator function #
 def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
-               gridN=1000, var_LambdaT=1.0, var_Lambda1=1, var_Lambda2=1.0, var_q=1.0, minMass=0.1,kdedim=2):
+               gridN=1000, var_LambdaT=1.0, var_Lambda1=1, var_Lambda2=1.0, var_q=1.0, var_logq = 1, minMass=0.1,kdedim=2,logq=False):
     '''
     This function numerically integrates the KDE along the
     EoS curve.
@@ -141,13 +141,13 @@ def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
         LambdaT = get_LambdaT_for_eos(m1, m2, max_mass_eos, eosfunc)
 
         # scale things back so they make sense with the KDE
-        LambdaT_scaled, q_scaled = LambdaT/var_LambdaT, q/var_q
+        LambdaT_scaled, q_scaled, logq_scaled = LambdaT/var_LambdaT, q/var_q, np.log(q)/var_logq
 
         # perform integration via trapazoidal approximation
         dq = np.diff(q)
-        f = postfunc.evaluate(np.vstack((LambdaT_scaled, q_scaled)).T)
+        f = postfunc.evaluate(np.vstack((LambdaT_scaled, (q_scaled if not logq else logq_scaled))).T)/ (1 if not logq else q)
         f_centers = 0.5*(f[1:] + f[:-1])
-        int_element = f_centers * dq
+        int_element = f_centers * dq 
 
         return [LambdaT_scaled, q_scaled, np.sum(int_element)]
     
@@ -246,7 +246,7 @@ def get_trials(fd):
 
 
 class Model_selection:
-    def __init__(self, posteriorFile, priorFile=None, spectral=False,Ns=None,kdedim=2):
+    def __init__(self, posteriorFile, priorFile=None, spectral=False,Ns=None,kdedim=2,logq=False):
         '''
         Initiates the Bayes factor calculator with the posterior
         samples from the uniform LambdaT, dLambdaT parameter
@@ -368,19 +368,27 @@ class Model_selection:
         # store useful parameters
         self.mc_mean = np.mean(self.data['mc_source'])
         self.kdedim=kdedim
+        self.logq = logq
 
         # whiten data and compute KDE
         self.var_q = np.std(self.data['q'])
-
+        self.var_logq = np.std(self.data['q'])
+        
         self.q_max /= self.var_q
         self.q_min /= self.var_q
         self.yhigh = 1.0/self.var_q  # For reflection boundary condition
+        self.logyhigh=0.
         if self.kdedim==2:
             self.var_LambdaT = np.std(self.data['lambdat'])
             self.var_Lambda1 = 1.0
             self.var_Lambda2 = 1.0
-            self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
+            if not self.logq:
+                self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
                                            self.data['q']/self.var_q)).T
+            else:
+                self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
+                                           np.log(self.data['q'])/self.var_logq)).T
+                
             self.bw = len(self.margPostData)**(-1/6.)  # Scott's bandwidth factor
 
             # Compute the KDE for the marginalized posterior distribution #
@@ -388,20 +396,24 @@ class Model_selection:
                                       xlow=0.0,
                                       xhigh=None,
                                       ylow=None,
-                                      yhigh=self.yhigh)
+                                      yhigh=(self.yhigh if not self.logq else self.logyhigh))
         elif self.kdedim==3:
             self.var_Lambda1 = np.std(self.data['lambda1'])
             self.var_Lambda2 = np.std(self.data['lambda2'])
             self.var_LambdaT = 1.0
-            self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
+            if not self.logq:
+                self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
 self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
+            else:
+                self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
+np.log(self.data['q'])/self.var_logq,self.data['lambda2']/self.var_Lambda2)).T
             #Calculate kde bandwidth
             self.bw = len(self.margPostData)**(-1/6.)  # Scott's bandwidth factor
             # Compute the KDE for the marginalized posterior distribution #
             self.var_LambdaT=1.0
             self.kde = Bounded_3d_kde(self.margPostData,
                                   low=[0.0,0.0,0.0],
-                                  high=[np.inf,self.yhigh,np.inf])   
+                                  high=[np.inf,(self.yhigh if not self.logq else self.logyhigh), np.inf])   
         # Attribute that distinguishes parametrization method
         self.spectral = spectral
 
@@ -664,7 +676,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                           minMass=max(self.minMass,min_mass1),
                                           kdedim=self.kdedim,
                                           var_Lambda1=self.var_Lambda1,
-                                          var_Lambda2=self.var_Lambda2)
+                                          var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         [lambdat_eos2,
          q_eos2, support2D2] = integrator(self.q_min, self.q_max, self.mc_mean,
@@ -675,7 +687,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                           minMass=max(self.minMass,min_mass2),
                                           kdedim=self.kdedim,
                                           var_Lambda1=self.var_Lambda1,
-                                          var_Lambda2=self.var_Lambda2)
+                                          var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         # iterate to determine uncertainty via re-drawing from
         # smoothed distribution
@@ -764,7 +776,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                         minMass=min_mass,
                                         kdedim=self.kdedim,
                                         var_Lambda1=self.var_Lambda1,
-                                        var_Lambda2=self.var_Lambda2)
+                                        var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         return(support2D)
 
@@ -895,7 +907,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
 
 
 class Stacking():
-    def __init__(self, event_list, event_priors=None, labels=None,spectral=False,Ns=None,kdedim=2):
+    def __init__(self, event_list, event_priors=None, labels=None,spectral=False,Ns=None,kdedim=2,logq=False):
         '''
         This class takes as input a list of posterior-samples files for
         various events. Optionally, prior samples files can also be
@@ -953,7 +965,7 @@ class Stacking():
         modsel=[]
         for prior_file, event_file, this_kdedim in zip(self.event_priors, self.event_list,self.kdedim):
             modsel.append(Model_selection(posteriorFile=event_file,
-                                     priorFile=prior_file,spectral=self.spectral,Ns=Ns,kdedim=this_kdedim))
+                                     priorFile=prior_file,spectral=self.spectral,Ns=Ns,kdedim=this_kdedim,logq=logq))
         self.modsel=modsel
         self.Nevents=len(modsel)
     def stack_events(self, EoS1, EoS2, trials=0, gridN=1000, save=None, 
