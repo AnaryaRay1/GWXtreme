@@ -405,6 +405,8 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
         # Attribute that distinguishes parametrization method
         self.spectral = spectral
 
+        self.isBBH = False
+
     def getEoSInterp(self, eosname=None, m_min=1.0, N=100):
         '''
         This method accepts one of the NS native equations of state
@@ -444,6 +446,11 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
         # Keeping number upto 3 decimal places
         # Not rounding up, since that will lead to RuntimeError
         max_mass = int(max_mass*1000)/1000
+
+        if max_mass < m_min: # if max_mass of EoS is smaller than population's min mass, they're all BBHs
+            self.isBBH = True # if definition of max_mass or m_min is changed in the future, adjust this logic accordingly
+            return [np.nan,np.nan,np.nan,np.nan]
+
         masses = np.linspace(m_min, max_mass, N)
         masses = masses[masses <= max_mass]
         Lambdas = []
@@ -591,6 +598,35 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
         # generate interpolators for both EOS
         min_mass1,min_mass2 = 0.,0.
 
+        if type(EoS2) == list:
+            [s2, _,
+             max_mass_eos2,min_mass2] = self.getEoSInterp_parametrized(EoS2, N=1000)
+
+        elif os.path.exists(EoS2):
+            if verbose:
+                print('Trying m-R-k file to compute EoS interpolant')
+            try:
+                [s2, _, _,
+                 max_mass_eos2] = self.getEoSInterpFromMRFile(EoS2)
+            except ValueError:
+                if verbose:
+                    print('Trying m-λ file to compute EoS interpolant')
+                [s2, _, _,
+                 max_mass_eos2] = self.getEoSInterpFromMLambdaFile(EoS2)
+        else:
+            [s2, _, _,
+             max_mass_eos2] = self.getEoSInterp(eosname=EoS2,
+                                                m_min=self.minMass)
+
+        try: assert self.isBBH == False
+        except AssertionError:
+            self.isBBH = False
+            print("The system being studied is a binary black hole system.")
+            if trials == 0:
+                return np.nan
+            else:
+                return [np.nan, np.repeat(np.nan,trials)]
+
         if type(EoS1) == list:
             [s1, _,
              max_mass_eos1,min_mass1] = self.getEoSInterp_parametrized(EoS1, N=1000)
@@ -611,25 +647,12 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
              max_mass_eos1] = self.getEoSInterp(eosname=EoS1,
                                                 m_min=self.minMass)
 
-        if type(EoS2) == list:
-            [s2, _,
-             max_mass_eos2,min_mass2] = self.getEoSInterp_parametrized(EoS2, N=1000)
-
-        elif os.path.exists(EoS2):
-            if verbose:
-                print('Trying m-R-k file to compute EoS interpolant')
-            try:
-                [s2, _, _,
-                 max_mass_eos2] = self.getEoSInterpFromMRFile(EoS2)
-            except ValueError:
-                if verbose:
-                    print('Trying m-λ file to compute EoS interpolant')
-                [s2, _, _,
-                 max_mass_eos2] = self.getEoSInterpFromMLambdaFile(EoS2)
-        else:
-            [s2, _, _,
-             max_mass_eos2] = self.getEoSInterp(eosname=EoS2,
-                                                m_min=self.minMass)
+        if self.isBBH == True:
+            self.isBBH = False
+            if trials == 0:
+                return 0
+            else:
+                return [0, np.repeat(0,trials)]
 
         # compute support
         [lambdat_eos1,
@@ -1008,11 +1031,13 @@ class Stacking():
                 joint_bf *= bayes_factor
                 self.all_bayes_factors.append(bayes_factor)
             elif type(bayes_factor) == list:
-                joint_bf *= bayes_factor[0]
-                self.all_bayes_factors.append(bayes_factor[0])
-                this_event_error = 2*np.std(bayes_factor[-1])
-                self.all_bayes_factors_errors.append(this_event_error)
-                joint_bf_array *= bayes_factor[-1]
+                if type(bayes_factor[0]) == np.float64:
+                    joint_bf *= bayes_factor[0]
+                    self.all_bayes_factors.append(bayes_factor[0])
+                    this_event_trials = bayes_factor[-1]
+                    this_event_error = 2*np.std(this_event_trials)
+                    self.all_bayes_factors_errors.append(this_event_error)
+                    joint_bf_array *= bayes_factor[-1]
 
         if save is None:
             if trials > 0:
