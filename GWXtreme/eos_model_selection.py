@@ -224,7 +224,8 @@ def get_trials(fd):
                                        minMass=fd['minMass'],
                                        kdedim=fd['kdedim'],
                                        var_Lambda1=fd['var_Lambda1'],
-                                       var_Lambda2=fd['var_Lambda2'])
+                                       var_Lambda2=fd['var_Lambda2'],
+                                       logq=fd['logq'])
         [this_lambdat_eos2, this_q_eos2,
          this_support2D2] = integrator(fd['q_min'], fd['q_max'],
                                        fd['mc_mean'], fd['s2'],
@@ -235,7 +236,8 @@ def get_trials(fd):
                                        minMass=fd['minMass'],
                                        kdedim=fd['kdedim'],
                                        var_Lambda1=fd['var_Lambda1'],
-                                       var_Lambda2=fd['var_Lambda2'])
+                                       var_Lambda2=fd['var_Lambda2'],
+                                       logq=fd['logq'])
 
         # store the result
         support2D1_list.append(this_support2D1)
@@ -726,7 +728,7 @@ np.log(self.data['q'])/self.var_logq,self.data['lambda2']/self.var_Lambda2)).T
                            "var_LambdaT": self.var_LambdaT, "var_q": self.var_q,
                            "minMass": self.minMass, 'trials': this_trials,
                            "kdedim":self.kdedim, "var_Lambda1": self.var_Lambda1,
-                           "var_Lambda2": self.var_Lambda2}
+                           "var_Lambda2": self.var_Lambda2, "logq": self.logq}
 
             futures.append(get_trials.remote(future_dict))
             if verbose:
