@@ -155,11 +155,11 @@ def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
         Lambda1,Lambda2 = get_Lambda_for_eos(m1, max_mass_eos, eosfunc),get_Lambda_for_eos(m2, max_mass_eos, eosfunc)
 
         # scale things back so they make sense with the KDE
-        Lambda1_scaled,Lambda2_scaled, q_scaled = Lambda1/var_Lambda1,Lambda2/var_Lambda2 ,q/var_q
+        Lambda1_scaled,Lambda2_scaled, q_scaled, logq_scaled = Lambda1/var_Lambda1,Lambda2/var_Lambda2 ,q/var_q, np.log(q)/var_logq
 
         # perform integration via trapazoidal approximation
         dq = np.diff(q)
-        f = postfunc.evaluate(np.vstack((Lambda1_scaled, q_scaled,Lambda2_scaled)).T)
+        f = postfunc.evaluate(np.vstack((Lambda1_scaled, (q_scaled if not logq else logq_scaled),Lambda2_scaled)).T)/ (1 if not logq else q)
         f_centers = 0.5*(f[1:]+f[:-1])
         int_element = f_centers * dq
         LambdaT_scaled=getLambdaT(m1,m2,Lambda1_scaled,Lambda2_scaled)
