@@ -194,9 +194,10 @@ def get_trials(fd):
             N_resample = int(len(fd['margPostData'])*prune_adjust_factor)
             new_margPostData = fd['kde'].resample(size=N_resample).T
             unphysical = (new_margPostData[:, 0] < 0) +\
-                         (new_margPostData[:, 1] > fd['yhigh']) +\
+                         (new_margPostData[:, 1] > (fd['yhigh'] if not fd['logq'] else fd['logyhigh']) ) +\
                          (new_margPostData[:, 1] < 0)
             new_margPostData = new_margPostData[~unphysical]
+            print("Count: {}".format(counter))
             counter += 1
         indices = np.arange(len(new_margPostData))
         chosen = np.random.choice(indices, len(fd['margPostData']))
@@ -206,12 +207,12 @@ def get_trials(fd):
         if fd['kdedim'] == 2:
             new_kde = Bounded_2d_kde(new_margPostData, xlow=0.0,
                                      xhigh=None, ylow=0.0,
-                                     yhigh=fd['yhigh'],
+                                     yhigh=(fd['yhigh'] if not fd['logq'] else fd['logyhigh']),
                                      bw=fd['bw'])
         elif fd['kdedim'] == 3:
             new_kde = Bounded_3d_kde(new_margPostData,
                                      low=[0.0,0.0,0.0],
-                                     high=[np.inf,fd['yhigh'],np.inf])   
+                                     high=[np.inf,(fd['yhigh'] if not fd['logq'] else fd['logyhigh']),np.inf])   
 
        # integrate to get support
         [this_lambdat_eos1, this_q_eos1,
@@ -225,6 +226,7 @@ def get_trials(fd):
                                        kdedim=fd['kdedim'],
                                        var_Lambda1=fd['var_Lambda1'],
                                        var_Lambda2=fd['var_Lambda2'],
+                                       var_logq = fd['var_logq'],
                                        logq=fd['logq'])
         [this_lambdat_eos2, this_q_eos2,
          this_support2D2] = integrator(fd['q_min'], fd['q_max'],
@@ -237,6 +239,7 @@ def get_trials(fd):
                                        kdedim=fd['kdedim'],
                                        var_Lambda1=fd['var_Lambda1'],
                                        var_Lambda2=fd['var_Lambda2'],
+                                       var_logq = fd['var_logq'],
                                        logq=fd['logq'])
 
         # store the result
@@ -374,7 +377,7 @@ class Model_selection:
 
         # whiten data and compute KDE
         self.var_q = np.std(self.data['q'])
-        self.var_logq = np.std(self.data['q'])
+        self.var_logq = np.std(np.log(self.data['q']))
         
         self.q_max /= self.var_q
         self.q_min /= self.var_q
@@ -725,10 +728,10 @@ np.log(self.data['q'])/self.var_logq,self.data['lambda2']/self.var_Lambda2)).T
                            "q_max": self.q_max, "mc_mean": self.mc_mean, "s1": s1,
                            "s2": s2, "max_mass_eos1": max_mass_eos1,
                            "max_mass_eos2": max_mass_eos2, "gridN": gridN,
-                           "var_LambdaT": self.var_LambdaT, "var_q": self.var_q,
+                           "var_LambdaT": self.var_LambdaT, "var_q": self.var_q, "var_logq": self.var_logq,
                            "minMass": self.minMass, 'trials': this_trials,
                            "kdedim":self.kdedim, "var_Lambda1": self.var_Lambda1,
-                           "var_Lambda2": self.var_Lambda2, "logq": self.logq}
+                           "var_Lambda2": self.var_Lambda2, "logq": self.logq, "logyhigh": self.logyhigh}
 
             futures.append(get_trials.remote(future_dict))
             if verbose:
