@@ -95,7 +95,7 @@ def get_Lambda_for_eos(m,max_mass_eos, eosfunc):
 
 # The integrator function #
 def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
-               gridN=1000, var_LambdaT=1.0, var_Lambda1=1, var_Lambda2=1.0, var_q=1.0, minMass=0.1,kdedim=2):
+               gridN=1000, var_LambdaT=1.0, var_Lambda1=1, var_Lambda2=1.0, var_q=1.0, var_logq = 1, minMass=0.1,kdedim=2,logq=False):
     '''
     This function numerically integrates the KDE along the
     EoS curve.
@@ -141,13 +141,13 @@ def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
         LambdaT = get_LambdaT_for_eos(m1, m2, max_mass_eos, eosfunc)
 
         # scale things back so they make sense with the KDE
-        LambdaT_scaled, q_scaled = LambdaT/var_LambdaT, q/var_q
+        LambdaT_scaled, q_scaled, logq_scaled = LambdaT/var_LambdaT, q/var_q, np.log(q)/var_logq
 
         # perform integration via trapazoidal approximation
         dq = np.diff(q)
-        f = postfunc.evaluate(np.vstack((LambdaT_scaled, q_scaled)).T)
+        f = postfunc.evaluate(np.vstack((LambdaT_scaled, (q_scaled if not logq else logq_scaled))).T)/ (1 if not logq else q)
         f_centers = 0.5*(f[1:] + f[:-1])
-        int_element = f_centers * dq
+        int_element = f_centers * dq 
 
         return [LambdaT_scaled, q_scaled, np.sum(int_element)]
     
@@ -155,11 +155,11 @@ def integrator(q_min, q_max, mc, eosfunc, max_mass_eos, postfunc,
         Lambda1,Lambda2 = get_Lambda_for_eos(m1, max_mass_eos, eosfunc),get_Lambda_for_eos(m2, max_mass_eos, eosfunc)
 
         # scale things back so they make sense with the KDE
-        Lambda1_scaled,Lambda2_scaled, q_scaled = Lambda1/var_Lambda1,Lambda2/var_Lambda2 ,q/var_q
+        Lambda1_scaled,Lambda2_scaled, q_scaled, logq_scaled = Lambda1/var_Lambda1,Lambda2/var_Lambda2 ,q/var_q, np.log(q)/var_logq
 
         # perform integration via trapazoidal approximation
         dq = np.diff(q)
-        f = postfunc.evaluate(np.vstack((Lambda1_scaled, q_scaled,Lambda2_scaled)).T)
+        f = postfunc.evaluate(np.vstack((Lambda1_scaled, (q_scaled if not logq else logq_scaled),Lambda2_scaled)).T)/ (1 if not logq else q)
         f_centers = 0.5*(f[1:]+f[:-1])
         int_element = f_centers * dq
         LambdaT_scaled=getLambdaT(m1,m2,Lambda1_scaled,Lambda2_scaled)
@@ -194,21 +194,27 @@ def get_trials(fd):
             N_resample = int(len(fd['margPostData'])*prune_adjust_factor)
             new_margPostData = fd['kde'].resample(size=N_resample).T
             unphysical = (new_margPostData[:, 0] < 0) +\
-                         (new_margPostData[:, 1] > fd['yhigh']) +\
+                         (new_margPostData[:, 1] > (fd['yhigh'] if not fd['logq'] else fd['logyhigh']) ) +\
                          (new_margPostData[:, 1] < 0)
             new_margPostData = new_margPostData[~unphysical]
+            print("Count: {}".format(counter))
             counter += 1
         indices = np.arange(len(new_margPostData))
         chosen = np.random.choice(indices, len(fd['margPostData']))
         new_margPostData = new_margPostData[chosen]
 
         # generate a new kde
-        new_kde = Bounded_2d_kde(new_margPostData, xlow=0.0,
-                                 xhigh=None, ylow=0.0,
-                                 yhigh=fd['yhigh'],
-                                 bw=fd['bw'])
+        if fd['kdedim'] == 2:
+            new_kde = Bounded_2d_kde(new_margPostData, xlow=0.0,
+                                     xhigh=None, ylow=0.0,
+                                     yhigh=(fd['yhigh'] if not fd['logq'] else fd['logyhigh']),
+                                     bw=fd['bw'])
+        elif fd['kdedim'] == 3:
+            new_kde = Bounded_3d_kde(new_margPostData,
+                                     low=[0.0,0.0,0.0],
+                                     high=[np.inf,(fd['yhigh'] if not fd['logq'] else fd['logyhigh']),np.inf])   
 
-        # integrate to get support
+       # integrate to get support
         [this_lambdat_eos1, this_q_eos1,
          this_support2D1] = integrator(fd['q_min'], fd['q_max'],
                                        fd['mc_mean'], fd['s1'],
@@ -216,7 +222,12 @@ def get_trials(fd):
                                        gridN=fd['gridN'],
                                        var_LambdaT=fd['var_LambdaT'],
                                        var_q=fd['var_q'],
-                                       minMass=fd['minMass'])
+                                       minMass=fd['minMass'],
+                                       kdedim=fd['kdedim'],
+                                       var_Lambda1=fd['var_Lambda1'],
+                                       var_Lambda2=fd['var_Lambda2'],
+                                       var_logq = fd['var_logq'],
+                                       logq=fd['logq'])
         [this_lambdat_eos2, this_q_eos2,
          this_support2D2] = integrator(fd['q_min'], fd['q_max'],
                                        fd['mc_mean'], fd['s2'],
@@ -224,7 +235,13 @@ def get_trials(fd):
                                        gridN=fd['gridN'],
                                        var_LambdaT=fd['var_LambdaT'],
                                        var_q=fd['var_q'],
-                                       minMass=fd['minMass'])
+                                       minMass=fd['minMass'],
+                                       kdedim=fd['kdedim'],
+                                       var_Lambda1=fd['var_Lambda1'],
+                                       var_Lambda2=fd['var_Lambda2'],
+                                       var_logq = fd['var_logq'],
+                                       logq=fd['logq'])
+
         # store the result
         support2D1_list.append(this_support2D1)
         support2D2_list.append(this_support2D2)
@@ -234,7 +251,7 @@ def get_trials(fd):
 
 
 class Model_selection:
-    def __init__(self, posteriorFile, priorFile=None, spectral=False,Ns=None,kdedim=2):
+    def __init__(self, posteriorFile, priorFile=None, spectral=False,Ns=None,kdedim=2,logq=False):
         '''
         Initiates the Bayes factor calculator with the posterior
         samples from the uniform LambdaT, dLambdaT parameter
@@ -255,6 +272,8 @@ class Model_selection:
                          
         Ns            :: Number of Samples to be used for KDE. (Using all samples 
                          from PE will make it very slow)
+
+        kdedim        :: dimensionality of the KDE
                          
         '''
         if(posteriorFile[-2:]=='h5'):
@@ -275,8 +294,45 @@ class Model_selection:
                                                 np.array(_data['chirp_mass_source']),
                                                 np.array(_data['lambda_1']),
                                                 np.array(_data['lambda_2']))
-                LambdaT=None
-            
+                LambdaT=None 
+
+        elif(posteriorFile[-3:]=='txt'):
+            _data = np.loadtxt(posteriorFile)
+            if kdedim==2:
+                (m1,m2,q,mc,LambdaT)=(np.array(_data[0]),
+                                        np.array(_data[1]),
+                                        np.array(_data[2]),
+                                        np.array(_data[3]),
+                                        np.array(_data[4]))
+                lambda_1,lambda_2 = None,None
+            else:
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data[0]),
+                                                np.array(_data[1]),
+                                                np.array(_data[2]),
+                                                np.array(_data[3]),
+                                                np.array(_data[4]),
+                                                np.array(_data[5]))
+                LambdaT=None 
+
+        elif(posteriorFile[-4:]=='json'):
+            with open(posteriorFile,"r") as f:
+                _data = json.load(f)['posterior']['content']
+            if kdedim==2:
+                (m1,m2,q,mc,LambdaT)=(np.array(_data['m1_source']),
+                                        np.array(_data['m2_source']),
+                                        np.array(_data['q']),
+                                        np.array(_data['mc_source']),
+                                        np.array(_data['lambdat']))
+                lambda_1,lambda_2 = None,None
+            else:
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['m1_source']),
+                                                np.array(_data['m2_source']),
+                                                np.array(_data['q']),
+                                                np.array(_data['mc_source']),
+                                                np.array(_data['lambda_1']),
+                                                np.array(_data['lambda_2']))
+                LambdaT=None 
+
         else:
             _data = np.recfromtxt(posteriorFile, names=True)
             if kdedim==2:
@@ -287,10 +343,10 @@ class Model_selection:
                                         np.array(_data['lambdat']))
                 lambda_1,lambda_2 = None,None
             else:
-                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['mass_1_source']),
-                                        np.array(_data['mass_2_source']),
-                                        np.array(_data['mass_ratio']),
-                                        np.array(_data['chirp_mass_source']),
+                (m1,m2,q,mc,lambda_1,lambda_2)=(np.array(_data['m1_source']),
+                                        np.array(_data['m2_source']),
+                                        np.array(_data['q']),
+                                        np.array(_data['mc_source']),
                                         np.array(_data['lambda_1']),
                                         np.array(_data['lambda_2']))
                 LambdaT=None
@@ -317,19 +373,27 @@ class Model_selection:
         # store useful parameters
         self.mc_mean = np.mean(self.data['mc_source'])
         self.kdedim=kdedim
+        self.logq = logq
 
         # whiten data and compute KDE
         self.var_q = np.std(self.data['q'])
-
+        self.var_logq = np.std(np.log(self.data['q']))
+        
         self.q_max /= self.var_q
         self.q_min /= self.var_q
         self.yhigh = 1.0/self.var_q  # For reflection boundary condition
+        self.logyhigh=0.
         if self.kdedim==2:
             self.var_LambdaT = np.std(self.data['lambdat'])
             self.var_Lambda1 = 1.0
             self.var_Lambda2 = 1.0
-            self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
+            if not self.logq:
+                self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
                                            self.data['q']/self.var_q)).T
+            else:
+                self.margPostData = np.vstack((self.data['lambdat']/self.var_LambdaT,
+                                           np.log(self.data['q'])/self.var_logq)).T
+                
             self.bw = len(self.margPostData)**(-1/6.)  # Scott's bandwidth factor
 
             # Compute the KDE for the marginalized posterior distribution #
@@ -337,22 +401,28 @@ class Model_selection:
                                       xlow=0.0,
                                       xhigh=None,
                                       ylow=None,
-                                      yhigh=self.yhigh)
+                                      yhigh=(self.yhigh if not self.logq else self.logyhigh))
         elif self.kdedim==3:
             self.var_Lambda1 = np.std(self.data['lambda1'])
             self.var_Lambda2 = np.std(self.data['lambda2'])
             self.var_LambdaT = 1.0
-            self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
+            if not self.logq:
+                self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
 self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
+            else:
+                self.margPostData = np.vstack((self.data['lambda1']/self.var_Lambda1,
+np.log(self.data['q'])/self.var_logq,self.data['lambda2']/self.var_Lambda2)).T
             #Calculate kde bandwidth
             self.bw = len(self.margPostData)**(-1/6.)  # Scott's bandwidth factor
             # Compute the KDE for the marginalized posterior distribution #
             self.var_LambdaT=1.0
             self.kde = Bounded_3d_kde(self.margPostData,
                                   low=[0.0,0.0,0.0],
-                                  high=[np.inf,self.yhigh,np.inf])   
+                                  high=[np.inf,(self.yhigh if not self.logq else self.logyhigh), np.inf])   
         # Attribute that distinguishes parametrization method
         self.spectral = spectral
+
+        self.isBBH = False
 
     def getEoSInterp(self, eosname=None, m_min=1.0, N=100):
         '''
@@ -393,6 +463,11 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
         # Keeping number upto 3 decimal places
         # Not rounding up, since that will lead to RuntimeError
         max_mass = int(max_mass*1000)/1000
+
+        if max_mass < m_min: # if max_mass of EoS is smaller than population's min mass, they're all BBHs
+            self.isBBH = True # if definition of max_mass or m_min is changed in the future, adjust this logic accordingly
+            return [np.nan,np.nan,np.nan,np.nan]
+
         masses = np.linspace(m_min, max_mass, N)
         masses = masses[masses <= max_mass]
         Lambdas = []
@@ -540,26 +615,6 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
         # generate interpolators for both EOS
         min_mass1,min_mass2 = 0.,0.
 
-        if type(EoS1) == list:
-            [s1, _,
-             max_mass_eos1,min_mass1] = self.getEoSInterp_parametrized(EoS1, N=1000)
-
-        elif os.path.exists(EoS1):
-            if verbose:
-                print('Trying m-R-k file to compute EoS interpolant')
-            try:
-                [s1, _, _,
-                 max_mass_eos1] = self.getEoSInterpFromMRFile(EoS1)
-            except ValueError:
-                if verbose:
-                    print('Trying m-λ file to compute EoS interpolant')
-                [s1, _, _,
-                 max_mass_eos1] = self.getEoSInterpFromMLambdaFile(EoS1)
-        else:
-            [s1, _, _,
-             max_mass_eos1] = self.getEoSInterp(eosname=EoS1,
-                                                m_min=self.minMass)
-
         if type(EoS2) == list:
             [s2, _,
              max_mass_eos2,min_mass2] = self.getEoSInterp_parametrized(EoS2, N=1000)
@@ -580,6 +635,42 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
              max_mass_eos2] = self.getEoSInterp(eosname=EoS2,
                                                 m_min=self.minMass)
 
+        try: assert self.isBBH == False
+        except AssertionError:
+            self.isBBH = False
+            print("The system being studied is a binary black hole system.")
+            if trials == 0:
+                return np.nan
+            else:
+                return [np.nan, np.repeat(np.nan,trials)]
+
+        if type(EoS1) == list:
+            [s1, _,
+             max_mass_eos1,min_mass1] = self.getEoSInterp_parametrized(EoS1, N=1000)
+
+        elif os.path.exists(EoS1):
+            if verbose:
+                print('Trying m-R-k file to compute EoS interpolant')
+            try:
+                [s1, _, _,
+                 max_mass_eos1] = self.getEoSInterpFromMRFile(EoS1)
+            except ValueError:
+                if verbose:
+                    print('Trying m-λ file to compute EoS interpolant')
+                [s1, _, _,
+                 max_mass_eos1] = self.getEoSInterpFromMLambdaFile(EoS1)
+        else:
+            [s1, _, _,
+             max_mass_eos1] = self.getEoSInterp(eosname=EoS1,
+                                                m_min=self.minMass)
+
+        if self.isBBH == True:
+            self.isBBH = False
+            if trials == 0:
+                return 0
+            else:
+                return [0, np.repeat(0,trials)]
+
         # compute support
         [lambdat_eos1,
          q_eos1, support2D1] = integrator(self.q_min, self.q_max, self.mc_mean,
@@ -590,7 +681,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                           minMass=max(self.minMass,min_mass1),
                                           kdedim=self.kdedim,
                                           var_Lambda1=self.var_Lambda1,
-                                          var_Lambda2=self.var_Lambda2)
+                                          var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         [lambdat_eos2,
          q_eos2, support2D2] = integrator(self.q_min, self.q_max, self.mc_mean,
@@ -601,7 +692,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                           minMass=max(self.minMass,min_mass2),
                                           kdedim=self.kdedim,
                                           var_Lambda1=self.var_Lambda1,
-                                          var_Lambda2=self.var_Lambda2)
+                                          var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         # iterate to determine uncertainty via re-drawing from
         # smoothed distribution
@@ -637,8 +728,11 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                            "q_max": self.q_max, "mc_mean": self.mc_mean, "s1": s1,
                            "s2": s2, "max_mass_eos1": max_mass_eos1,
                            "max_mass_eos2": max_mass_eos2, "gridN": gridN,
-                           "var_LambdaT": self.var_LambdaT, "var_q": self.var_q,
-                           "minMass": self.minMass, 'trials': this_trials}
+                           "var_LambdaT": self.var_LambdaT, "var_q": self.var_q, "var_logq": self.var_logq,
+                           "minMass": self.minMass, 'trials': this_trials,
+                           "kdedim":self.kdedim, "var_Lambda1": self.var_Lambda1,
+                           "var_Lambda2": self.var_Lambda2, "logq": self.logq, "logyhigh": self.logyhigh}
+
             futures.append(get_trials.remote(future_dict))
             if verbose:
                 print("Submitted task in core: {}".format(ii+1))
@@ -687,7 +781,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
                                         minMass=min_mass,
                                         kdedim=self.kdedim,
                                         var_Lambda1=self.var_Lambda1,
-                                        var_Lambda2=self.var_Lambda2)
+                                        var_Lambda2=self.var_Lambda2,var_logq = self.var_logq,logq=self.logq)
 
         return(support2D)
 
@@ -818,7 +912,7 @@ self.data['q']/self.var_q,self.data['lambda2']/self.var_Lambda2)).T
 
 
 class Stacking():
-    def __init__(self, event_list, event_priors=None, labels=None,spectral=False,Ns=None,kdedim=2):
+    def __init__(self, event_list, event_priors=None, labels=None,spectral=False,Ns=None,kdedim=2,logq=False):
         '''
         This class takes as input a list of posterior-samples files for
         various events. Optionally, prior samples files can also be
@@ -876,7 +970,7 @@ class Stacking():
         modsel=[]
         for prior_file, event_file, this_kdedim in zip(self.event_priors, self.event_list,self.kdedim):
             modsel.append(Model_selection(posteriorFile=event_file,
-                                     priorFile=prior_file,spectral=self.spectral,Ns=Ns,kdedim=this_kdedim))
+                                     priorFile=prior_file,spectral=self.spectral,Ns=Ns,kdedim=this_kdedim,logq=logq))
         self.modsel=modsel
         self.Nevents=len(modsel)
     def stack_events(self, EoS1, EoS2, trials=0, gridN=1000, save=None, 
@@ -954,11 +1048,13 @@ class Stacking():
                 joint_bf *= bayes_factor
                 self.all_bayes_factors.append(bayes_factor)
             elif type(bayes_factor) == list:
-                joint_bf *= bayes_factor[0]
-                self.all_bayes_factors.append(bayes_factor[0])
-                this_event_error = 2*np.std(bayes_factor[-1])
-                self.all_bayes_factors_errors.append(this_event_error)
-                joint_bf_array *= bayes_factor[-1]
+                if type(bayes_factor[0]) == np.float64:
+                    joint_bf *= bayes_factor[0]
+                    self.all_bayes_factors.append(bayes_factor[0])
+                    this_event_trials = bayes_factor[-1]
+                    this_event_error = 2*np.std(this_event_trials)
+                    self.all_bayes_factors_errors.append(this_event_error)
+                    joint_bf_array *= bayes_factor[-1]
 
         if save is None:
             if trials > 0:
